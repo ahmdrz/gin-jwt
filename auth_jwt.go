@@ -301,6 +301,47 @@ func (mw *GinJWTMiddleware) middlewareImpl(c *gin.Context) {
 	c.Next()
 }
 
+func (mw *GinJWTMiddleware) CustomLogin(username, password string, c *gin.Context) string {
+	if err := mw.MiddlewareInit(); err != nil {
+		mw.unauthorized(c, http.StatusInternalServerError, mw.HTTPStatusMessageFunc(err, c))
+		return ""
+	}
+
+	userID, ok := mw.Authenticator(username, password, c)
+
+	if !ok {
+		mw.unauthorized(c, http.StatusUnauthorized, mw.HTTPStatusMessageFunc(ErrFailedAuthentication, c))
+		return ""
+	}
+
+	// Create the token
+	token := jwt.New(jwt.GetSigningMethod(mw.SigningAlgorithm))
+	claims := token.Claims.(jwt.MapClaims)
+
+	if mw.PayloadFunc != nil {
+		for key, value := range mw.PayloadFunc(username) {
+			claims[key] = value
+		}
+	}
+
+	if userID == "" {
+		userID = username
+	}
+
+	expire := mw.TimeFunc().Add(mw.Timeout)
+	claims["id"] = userID
+	claims["exp"] = expire.Unix()
+	claims["orig_iat"] = mw.TimeFunc().Unix()
+	tokenString, err := mw.signedString(token)
+
+	if err != nil {
+		mw.unauthorized(c, http.StatusUnauthorized, mw.HTTPStatusMessageFunc(ErrFailedTokenCreation, c))
+		return ""
+	}
+
+	return tokenString
+}
+
 // LoginHandler can be used by clients to get a jwt token.
 // Payload needs to be json in the form of {"username": "USERNAME", "password": "PASSWORD"}.
 // Reply will be of the form {"token": "TOKEN"}.
